@@ -5,3 +5,6 @@
 /build_cmake/
 /install/
 /logs/
+
+/env.sh
+/dist/
