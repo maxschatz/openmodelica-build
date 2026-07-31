@@ -137,6 +137,43 @@ Note that it is built *without* `-fopenmp`, so it runs serially — see the
 comments in `build.sh` for why, and for the caveat that its `nT`-bucket
 partitioning would be incomplete if anything ever did call it that way.
 
+### OMEdit's Documentation panel renders black
+
+Fixed automatically by `build.sh`; recorded here because it is not obvious and
+is worth reporting upstream.
+
+OMEdit ships two WebEngine workarounds compiled in under `#ifdef Q_OS_WIN`,
+both of which macOS also needs:
+
+1. **`QSG_RHI_BACKEND=opengl`** (`OMEditGUI/main.cpp`). The 3D animation viewer
+   is a `QOpenGLWidget` and OpenSceneGraph is OpenGL-only, so the top-level
+   window composites with OpenGL — while Qt Quick defaults to Metal on macOS.
+   The Documentation panel is a `QQuickWidget`, and it cannot obtain a `QRhi`
+   from a window using a different graphics API, so it draws nothing:
+
+   ```
+   The top-level window is not using the expected graphics API for
+   composition, 'OpenGL' is not compatible with this QQuickWidget
+   QQuickWidget: Failed to get a QRhi from the top-level widget's window
+   ```
+
+2. **`--no-sandbox`** (`OMEditLIB/OMEditApplication.cpp`). Upstream's own
+   comment says the sandbox "does not work with qt6-webengine".
+
+The script patches both to apply on macOS too. Only the sandbox flag is taken
+from the Windows block — its sibling `QTWEBENGINE_RESOURCES_PATH` /
+`QTWEBENGINE_LOCALES_PATH` lines encode a Windows install layout that the macOS
+framework already provides.
+
+Setting these as environment variables works identically (`qputenv` does the
+same thing), but patching the source is the better fix: an `Info.plist`
+`LSEnvironment` entry only applies to LaunchServices launches (Finder,
+Spotlight, `open`), leaving terminal launches broken, and a rebuild discards it.
+
+`build.sh` also re-signs the `.app` bundles. The linker's ad-hoc signature is
+invalidated when the install step adds bundle resources, and Chromium refuses to
+spawn its renderer under a broken signature.
+
 ## Known upstream issue
 
 [#15657](https://github.com/OpenModelica/OpenModelica/issues/15657) (Qt 6 +
