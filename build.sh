@@ -430,6 +430,24 @@ fi
 
 # --------------------------------------------------------------------- 5/5 ---
 
+if (( WITH_GUI )) && compgen -G "$INSTALL_DIR/Applications/*.app" >/dev/null; then
+  step "Re-signing app bundles"
+  # The linker leaves an ad-hoc signature on the executable, which the install
+  # step then invalidates by adding bundle resources ("code has no resources
+  # but signature indicates they must be present"). Qt tolerates that, but
+  # QtWebEngine does not: Chromium refuses to spawn its sandboxed renderer
+  # under a broken signature, so OMEdit's Documentation panel renders black
+  # with nothing on stderr. Re-sign ad-hoc to repair it.
+  for app in "$INSTALL_DIR"/Applications/*.app; do
+    codesign --force --deep --sign - "$app" >/dev/null 2>&1
+    if codesign --verify --deep "$app" >/dev/null 2>&1; then
+      info "$(basename "$app") signature ok"
+    else
+      warn "$(basename "$app") signature still invalid — QtWebEngine views may render black"
+    fi
+  done
+fi
+
 step "5/5  Verifying"
 
 OMC="$INSTALL_DIR/bin/omc"
