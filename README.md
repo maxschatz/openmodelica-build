@@ -136,15 +136,19 @@ enabled and the checkout is reused.
 
 ## After building
 
-```sh
-export OPENMODELICAHOME="$PWD/install"
-export PATH="$PWD/install/bin:$PATH"
+The build already added `OPENMODELICAHOME` and `PATH` to `~/.zshrc`, so in a new
+terminal:
 
+```sh
 omc --version          # -> v1.27.0-cmake
 open install/Applications/OMEdit.app
 ```
 
-Add the two `export` lines to `~/.zshrc` to make it permanent.
+If you built with `--no-setup-shell`, set them for the current shell instead:
+
+```sh
+source env.sh
+```
 
 Command-line tools land in `install/bin` (`omc`, `OMSimulator`,
 `OMShell-terminal`, …); the Qt apps are `.app` bundles in
