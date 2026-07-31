@@ -15,7 +15,7 @@ Copy and paste this into a terminal:
 mkdir -p ~/Developer && cd ~/Developer
 git clone https://github.com/maxschatz/openmodelica-build.git
 cd openmodelica-build
-./build.sh --setup-shell
+./build.sh
 ```
 
 That's the whole thing. It creates `~/Developer` (Apple's conventional location
@@ -42,8 +42,9 @@ omc --version
 open install/Applications/OMEdit.app
 ```
 
-Drop `--setup-shell` if you would rather not have `~/.zshrc` touched; the script
-writes a source-able `env.sh` either way.
+Pass `--no-setup-shell` if you would rather `~/.zshrc` were left alone; the
+script writes a source-able `env.sh` either way, and `uninstall.sh` removes the
+block again (keeping a backup).
 
 ### Requirements
 
@@ -114,6 +115,8 @@ OpenModelica release rewrites those blocks.
 | `--no-cpp-runtime` | Disable the C++ simulation runtime |
 | `--with-colpack` | Build the vendored ColPack (off by default — see below) |
 | `--minimal` | Upstream's conservative Apple Silicon profile |
+| `--no-setup-shell` | Don't touch `~/.zshrc` (the env block is added by default) |
+| `--setup-shell` | Explicitly add the env block — already the default |
 | `--skip-deps` | Don't touch Homebrew |
 | `--reconfigure` | Re-run CMake even if the build dir exists |
 | `--clean` | Delete `build_cmake/` and `install/` first |
