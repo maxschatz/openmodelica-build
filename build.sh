@@ -216,11 +216,27 @@ if [[ ! -d "$SRC_DIR/.git" ]]; then
       https://github.com/OpenModelica/OpenModelica.git "$SRC_DIR" \
       2>&1 | tee "$LOG_DIR/02-clone.log"
 else
-  info "reusing existing checkout at src/"
-  git -C "$SRC_DIR" fetch --depth 1 origin "$OM_VERSION" 2>&1 | tee "$LOG_DIR/02-clone.log"
-  git -C "$SRC_DIR" checkout -q FETCH_HEAD
-  git -C "$SRC_DIR" submodule update --init --recursive --depth 1 \
-      2>&1 | tee -a "$LOG_DIR/02-clone.log"
+  # The patches below live as working-tree modifications, so a plain
+  # "git checkout <other tag>" aborts rather than overwrite them. Reset hard
+  # when actually changing version -- the patch_* functions re-apply
+  # afterwards. When the requested version is already checked out, leave the
+  # tree alone so an unchanged rebuild stays cheap.
+  current_tag="$(git -C "$SRC_DIR" describe --tags --exact-match 2>/dev/null || true)"
+  if [[ -n "$current_tag" && "$current_tag" == "$OM_VERSION" ]]; then
+    info "already at $OM_VERSION, keeping the existing checkout"
+  else
+    info "switching to $OM_VERSION (local patches are discarded and re-applied)"
+    git -C "$SRC_DIR" fetch --depth 1 origin "$OM_VERSION" 2>&1 | tee "$LOG_DIR/02-clone.log"
+    git -C "$SRC_DIR" reset --hard -q FETCH_HEAD
+    # Submodules carry their own modifications (e.g. the ColPack patch).
+    git -C "$SRC_DIR" submodule foreach --recursive --quiet 'git reset --hard -q' >/dev/null 2>&1 || true
+    git -C "$SRC_DIR" submodule update --init --recursive --depth 1 --force \
+        2>&1 | tee -a "$LOG_DIR/02-clone.log"
+    # A cache configured against the previous version can carry stale paths and
+    # feature detections into the new one, so never reuse it across a version
+    # change.
+    RECONFIGURE=1
+  fi
 fi
 
 info "HEAD: $(git -C "$SRC_DIR" rev-parse --short HEAD)"
