@@ -270,7 +270,78 @@ PY
   (( found )) || info "ColPack: random_shuffle patch already applied"
 }
 
+# OMEdit's WebEngine views render black on macOS, because two workarounds
+# upstream already ships are compiled in under #ifdef Q_OS_WIN only:
+#
+#   1. QSG_RHI_BACKEND=opengl (main.cpp). The 3D animation viewer is a
+#      QOpenGLWidget and OpenSceneGraph is OpenGL-only, so the top-level window
+#      composites with OpenGL -- but Qt Quick defaults to Metal on macOS. The
+#      Documentation panel is a QQuickWidget, so it cannot get a QRhi from a
+#      window using a different API and draws nothing:
+#        "'OpenGL' is not compatible with this QQuickWidget"
+#        "QQuickWidget: Failed to get a QRhi from the top-level widget's window"
+#
+#   2. --no-sandbox (OMEditApplication.cpp). Upstream's own comment says the
+#      sandbox "does not work with qt6-webengine"; that applies to macOS too.
+#
+# Only the sandbox flag is taken from the Windows block -- its sibling
+# QTWEBENGINE_RESOURCES_PATH/LOCALES_PATH lines encode a Windows-only install
+# layout, and on macOS the framework already provides those.
+#
+# Doing this in the source rather than the app bundle's Info.plist matters:
+# LSEnvironment only applies to LaunchServices launches (Finder, Spotlight,
+# open), so a bundle-only fix leaves terminal launches broken.
+patch_omedit_macos_webengine() {
+  local main_cpp="$SRC_DIR/OMEdit/OMEditGUI/main.cpp"
+  local app_cpp="$SRC_DIR/OMEdit/OMEditLIB/OMEditApplication.cpp"
+
+  if [[ -f "$main_cpp" ]] && ! grep -q 'OMC_MAC_RHI_PATCH' "$main_cpp"; then
+    python3 - "$main_cpp" <<'PY'
+import sys
+path = sys.argv[1]
+src = open(path).read()
+old = '''#ifdef Q_OS_WIN
+  // Set this before creating QApplication. Avoids web engine switch to Direct3DSurface. See issue #15822.
+  qputenv("QSG_RHI_BACKEND", "opengl");
+#endif // #ifdef Q_OS_WIN'''
+new = '''/* OMC_MAC_RHI_PATCH: macOS needs this too. OpenSceneGraph forces the window
+ * onto OpenGL, while Qt Quick would default to Metal, leaving QQuickWidget
+ * (the Documentation panel) unable to obtain a QRhi. */
+#if defined(Q_OS_WIN) || defined(Q_OS_MAC)
+  // Set this before creating QApplication. Avoids web engine switch to Direct3DSurface. See issue #15822.
+  qputenv("QSG_RHI_BACKEND", "opengl");
+#endif // #if defined(Q_OS_WIN) || defined(Q_OS_MAC)'''
+if old not in src:
+    sys.exit("main.cpp: expected QSG_RHI_BACKEND block not found")
+open(path, "w").write(src.replace(old, new, 1))
+PY
+    patched "main.cpp (QSG_RHI_BACKEND=opengl on macOS)"
+  fi
+
+  if [[ -f "$app_cpp" ]] && ! grep -q 'OMC_MAC_SANDBOX_PATCH' "$app_cpp"; then
+    python3 - "$app_cpp" <<'PY'
+import sys
+path = sys.argv[1]
+src = open(path).read()
+anchor = '''#ifdef Q_OS_WIN
+  // currently the sandbox does not work with qt6-webengine'''
+new = '''#ifdef Q_OS_MAC
+  /* OMC_MAC_SANDBOX_PATCH: the qt6-webengine sandbox is broken on macOS as
+   * well, which leaves WebEngine views blank with nothing on stderr. */
+  qputenv("QTWEBENGINE_CHROMIUM_FLAGS", qgetenv("QTWEBENGINE_CHROMIUM_FLAGS") + " --no-sandbox");
+#endif // #ifdef Q_OS_MAC
+#ifdef Q_OS_WIN
+  // currently the sandbox does not work with qt6-webengine'''
+if anchor not in src:
+    sys.exit("OMEditApplication.cpp: expected Q_OS_WIN sandbox block not found")
+open(path, "w").write(src.replace(anchor, new, 1))
+PY
+    patched "OMEditApplication.cpp (--no-sandbox on macOS)"
+  fi
+}
+
 (( WITH_COLPACK )) && patch_colpack_random_shuffle
+(( WITH_GUI )) && patch_omedit_macos_webengine
 
 # --------------------------------------------------------------------- 3/5 ---
 
