@@ -18,6 +18,7 @@ WITH_GUI=1                    # OMEdit / OMPlot / OMShell (needs Qt 6)
 WITH_FORTRAN=1                # gfortran from Homebrew gcc
 WITH_OPTIMIZATION=1           # Ipopt dynamic optimization (implies Fortran)
 WITH_CPP_RUNTIME=1            # C++ simulation runtime (needs Boost)
+WITH_COLPACK=0                # see the ColPack note below
 SKIP_DEPS=0
 CLEAN=0
 RECONFIGURE=0
@@ -53,6 +54,9 @@ Options:
   --no-fortran      Disable Fortran (also disables optimization)
   --no-optimization Disable Ipopt-based dynamic optimization
   --no-cpp-runtime  Disable the C++ simulation runtime
+  --with-colpack    Build the vendored ColPack graph-colouring library. Off by
+                    default: nothing in this release actually calls it, and it
+                    needs OpenMP, which Apple clang does not ship.
   --minimal         Upstream's conservative Apple Silicon profile:
                     equivalent to --no-gui --no-fortran --no-optimization
 
@@ -75,6 +79,7 @@ while [[ $# -gt 0 ]]; do
     --no-fortran)      WITH_FORTRAN=0; WITH_OPTIMIZATION=0; shift ;;
     --no-optimization) WITH_OPTIMIZATION=0; shift ;;
     --no-cpp-runtime)  WITH_CPP_RUNTIME=0; shift ;;
+    --with-colpack)    WITH_COLPACK=1; shift ;;
     --minimal)         WITH_GUI=0; WITH_FORTRAN=0; WITH_OPTIMIZATION=0; shift ;;
     --skip-deps)       SKIP_DEPS=1; shift ;;
     --reconfigure)     RECONFIGURE=1; shift ;;
@@ -149,22 +154,42 @@ if (( WITH_FORTRAN )); then
   fi
 fi
 
-# OpenMP. The bundled ColPack includes <omp.h> unconditionally and never calls
-# find_package(OpenMP) -- on Linux GCC supplies the header for free, but Apple
-# clang ships no OpenMP runtime at all, so ColPack fails to compile. Passing the
-# CMake OpenMP_* hints alone would not help a target that never looks for the
-# package, so point the compiler and linker at Homebrew's libomp globally. That
-# fixes ColPack and gives the rest of the tree real OpenMP rather than silently
-# serialised code.
+# ColPack is a graph-colouring library used to compress sparse Jacobians. It is
+# the single reason this build needs OpenMP, and it is the only thing that fails
+# to compile here: its SMPGC sources include <omp.h> unconditionally, which
+# Apple clang does not ship, and they call std::random_shuffle, which C++17
+# removed and libc++ (unlike libstdc++) genuinely does not provide.
+#
+# It is also dead weight in this release. OM_OMC_ENABLE_COLPACK only ever gates
+# a link and an OMC_HAVE_COLPACK define; that define is never tested by any
+# #ifdef, and no ColPack symbol is referenced anywhere outside ColPack itself.
+# So it is compiled, linked, and never called -- turning it off costs nothing
+# and removes both failures at the source.
+#
+# --with-colpack still builds it, for which OpenMP has to be supplied by hand.
+# Note that this deliberately passes the header and runtime but *not* -fopenmp:
+# -fopenmp would also switch on OpenMP in OpenModelica's own solvers, where
+# clang enforces default(none) far more strictly than GCC (dassl.c,
+# ida_solver.c, jacobianSymbolical.c all fail to compile). Those parallel paths
+# have never been exercised on macOS, since find_package(OpenMP) always failed
+# there, so enabling them in a simulation tool risks data races.
+#
+# Be aware that ColPack built this way runs serially, and its SMPGC routines
+# partition work into caller-supplied nT buckets indexed by omp_get_thread_num().
+# With the pragmas ignored only bucket 0 is processed, so a caller passing nT > 1
+# would get an incomplete colouring. Nothing calls it today, but that is why it
+# is off by default rather than quietly built serial.
 LIBOMP="$BREW_PREFIX/opt/libomp"
 OMP_COMPILE_FLAGS=""
 OMP_LINK_FLAGS=""
-if [[ -f "$LIBOMP/include/omp.h" ]]; then
-  OMP_COMPILE_FLAGS="-Xclang -fopenmp -I$LIBOMP/include"
-  OMP_LINK_FLAGS="-L$LIBOMP/lib -lomp"
-  info "libomp: $LIBOMP"
-else
-  warn "libomp not found — ColPack will fail on a missing omp.h"
+if (( WITH_COLPACK )); then
+  if [[ -f "$LIBOMP/include/omp.h" ]]; then
+    OMP_COMPILE_FLAGS="-I$LIBOMP/include -Wno-unknown-pragmas"
+    OMP_LINK_FLAGS="-L$LIBOMP/lib -lomp"
+    info "libomp: $LIBOMP (header + runtime only, no OpenMP codegen)"
+  else
+    warn "libomp not found — ColPack will fail on a missing omp.h"
+  fi
 fi
 
 # --------------------------------------------------------------------- 2/5 ---
@@ -237,7 +262,7 @@ PY
   (( found )) || info "ColPack: random_shuffle patch already applied"
 }
 
-patch_colpack_random_shuffle
+(( WITH_COLPACK )) && patch_colpack_random_shuffle
 
 # --------------------------------------------------------------------- 3/5 ---
 
@@ -269,19 +294,11 @@ cmake_args=(
   -DOM_OMC_USE_LAPACK=ON        # satisfied by Apple's Accelerate framework
   -DOM_OMC_USE_CORBA=OFF
   -DOM_ENABLE_ENCRYPTION=OFF
+  -DOM_OMC_ENABLE_COLPACK=$( (( WITH_COLPACK )) && echo ON || echo OFF )
 )
 
-# Hints for the subprojects that *do* call find_package(OpenMP); CMake cannot
-# detect OpenMP under AppleClang on its own.
-if [[ -n "$OMP_COMPILE_FLAGS" ]]; then
-  cmake_args+=(
-    -DOpenMP_C_FLAGS="$OMP_COMPILE_FLAGS"
-    -DOpenMP_C_LIB_NAMES=omp
-    -DOpenMP_CXX_FLAGS="$OMP_COMPILE_FLAGS"
-    -DOpenMP_CXX_LIB_NAMES=omp
-    -DOpenMP_omp_LIBRARY="$LIBOMP/lib/libomp.dylib"
-  )
-fi
+# No OpenMP_* hints on purpose: find_package(OpenMP) should keep failing here,
+# so the subprojects that check for it build their serial paths (see above).
 
 if (( WITH_FORTRAN )); then
   cmake_args+=( -DOM_OMC_ENABLE_FORTRAN=ON -DCMAKE_Fortran_COMPILER="$GFORTRAN" )
@@ -308,7 +325,7 @@ else
   cmake_args+=( -DOM_ENABLE_GUI_CLIENTS=OFF )
 fi
 
-info "profile: gui=$WITH_GUI fortran=$WITH_FORTRAN optimization=$WITH_OPTIMIZATION cpp-runtime=$WITH_CPP_RUNTIME"
+info "profile: gui=$WITH_GUI fortran=$WITH_FORTRAN optimization=$WITH_OPTIMIZATION cpp-runtime=$WITH_CPP_RUNTIME colpack=$WITH_COLPACK"
 
 if [[ -f "$BUILD_DIR/CMakeCache.txt" ]] && (( ! RECONFIGURE )); then
   info "build dir already configured (use --reconfigure to redo)"
@@ -320,11 +337,72 @@ fi
 
 step "4/5  Building with $JOBS jobs"
 info "expect 40-90 min on a first build; ccache makes reruns much faster"
+echo
+
+# Render CMake's "[ 42%] Building ..." chatter as a progress bar, while the
+# unabridged output still goes to the log. Errors are printed through so a
+# failure is never hidden behind the bar. Falls back to periodic plain lines
+# when stdout is not a terminal (CI, or piping this script to a file).
+progress_bar() {
+  python3 -u -c '
+import re, sys, time, shutil
+
+pct, last, start, reported = 0, "", time.time(), -5
+tty = sys.stdout.isatty()
+PCT = re.compile(r"^\[\s*(\d+)%\]\s*(.*)")
+BAD = re.compile(r"error:|Error [0-9]|FAILED|fatal error", re.I)
+
+def width():
+    return shutil.get_terminal_size((100, 20)).columns
+
+def draw():
+    w = width()
+    bw = max(10, min(40, w - 44))
+    fill = bw * pct // 100
+    el = int(time.time() - start)
+    head = "  [{}{}] {:3d}%  {:d}m{:02d}s  ".format(
+        "#" * fill, "-" * (bw - fill), pct, el // 60, el % 60)
+    sys.stdout.write("\r" + (head + last[: max(0, w - len(head) - 2)]).ljust(w - 1)[: w - 1])
+    sys.stdout.flush()
+
+def clear():
+    if tty:
+        sys.stdout.write("\r" + " " * (width() - 1) + "\r")
+
+for raw in sys.stdin:
+    line = raw.rstrip("\n")
+    m = PCT.match(line)
+    if m:
+        pct, last = int(m.group(1)), m.group(2).strip()
+        if tty:
+            draw()
+        elif pct >= reported + 5 or pct == 100:
+            reported = pct
+            el = int(time.time() - start)
+            print("    {:3d}%  {:d}m{:02d}s  {}".format(pct, el // 60, el % 60, last))
+    elif BAD.search(line):
+        clear()
+        print(line)
+if tty:
+    clear()
+'
+}
 
 start=$SECONDS
-cmake --build "$BUILD_DIR" --target install --parallel "$JOBS" \
-    2>&1 | tee "$LOG_DIR/04-build.log"
+set +e
+cmake --build "$BUILD_DIR" --target install --parallel "$JOBS" 2>&1 \
+  | tee "$LOG_DIR/04-build.log" \
+  | progress_bar
+build_rc=${PIPESTATUS[0]}
+set -e
+echo
 info "build took $(( (SECONDS - start) / 60 )) min"
+
+if (( build_rc != 0 )); then
+  die "build failed (exit $build_rc) — full output in $LOG_DIR/04-build.log
+    last errors:
+$(grep -E 'error:|Error [0-9]|FAILED' "$LOG_DIR/04-build.log" | tail -5 | sed 's/^/      /')"
+fi
 
 # --------------------------------------------------------------------- 5/5 ---
 
