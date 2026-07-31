@@ -88,6 +88,7 @@ done
 
 BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GRN=$'\033[32m'; RST=$'\033[0m'
 step() { printf '\n%s==> %s%s\n' "$BOLD" "$*" "$RST"; }
+patched() { printf '    %spatched%s %s\n' "$GRN" "$RST" "$*"; }
 info() { printf '    %s\n' "$*"; }
 warn() { printf '%s    warning: %s%s\n' "$RED" "$*" "$RST"; }
 die()  { printf '\n%serror: %s%s\n' "$RED" "$*" "$RST" >&2; exit 1; }
@@ -190,6 +191,53 @@ else
 fi
 
 info "HEAD: $(git -C "$SRC_DIR" rev-parse --short HEAD)"
+
+# --- local patches ---------------------------------------------------------
+#
+# The bundled ColPack calls std::random_shuffle, which C++17 removed. The
+# top-level CMakeLists sets CMAKE_CXX_STANDARD 17 for the whole tree, so this
+# only bites on macOS: GCC's libstdc++ still ships random_shuffle in C++17
+# mode, while Apple's libc++ genuinely removes it.
+#
+# Upstream fixed this in OMCompiler-3rdParty (std::shuffle with an explicit
+# engine), but the submodule commit pinned by this release predates the fix.
+# Bumping the whole submodule would pull in unrelated changes to sundials and
+# the other vendored libraries, so apply just this change here. Idempotent:
+# re-runs and fresh clones are both safe.
+patch_colpack_random_shuffle() {
+  local f found=0
+  for f in "$SRC_DIR"/OMCompiler/3rdParty/ColPack/src/SMPGC/*.cpp; do
+    [[ -f "$f" ]] || continue
+    grep -q 'std::random_shuffle' "$f" || continue
+    found=1
+    python3 - "$f" <<'PY'
+import re, sys
+
+path = sys.argv[1]
+src = open(path).read()
+
+# std::shuffle needs <algorithm>; the engine needs <random>.
+for header in ("<random>", "<algorithm>"):
+    if f"#include {header}" not in src:
+        src = re.sub(r'(#include\s+[<"][^>"]+[>"]\n)',
+                     rf'\1#include {header}\n', src, count=1)
+
+# Brace-scope the engine so the replacement stays a single statement and the
+# name cannot collide with anything already in the enclosing function.
+src = re.sub(
+    r'std::random_shuffle\((.*?)\);',
+    r'{ std::default_random_engine omc_rng(std::random_device{}()); '
+    r'std::shuffle(\1, omc_rng); }',
+    src)
+
+open(path, "w").write(src)
+PY
+    patched "$(basename "$f") (random_shuffle -> shuffle)"
+  done
+  (( found )) || info "ColPack: random_shuffle patch already applied"
+}
+
+patch_colpack_random_shuffle
 
 # --------------------------------------------------------------------- 3/5 ---
 
