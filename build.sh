@@ -30,7 +30,7 @@ LOG_DIR="$ROOT/logs"
 
 BREW_FORMULAE=(
   cmake ninja autoconf automake libtool pkg-config
-  gcc boost ccache openjdk
+  gcc boost ccache openjdk libomp
   readline gettext expat flex bison
 )
 BREW_GUI_FORMULAE=( qt open-scene-graph )
@@ -148,6 +148,24 @@ if (( WITH_FORTRAN )); then
   fi
 fi
 
+# OpenMP. The bundled ColPack includes <omp.h> unconditionally and never calls
+# find_package(OpenMP) -- on Linux GCC supplies the header for free, but Apple
+# clang ships no OpenMP runtime at all, so ColPack fails to compile. Passing the
+# CMake OpenMP_* hints alone would not help a target that never looks for the
+# package, so point the compiler and linker at Homebrew's libomp globally. That
+# fixes ColPack and gives the rest of the tree real OpenMP rather than silently
+# serialised code.
+LIBOMP="$BREW_PREFIX/opt/libomp"
+OMP_COMPILE_FLAGS=""
+OMP_LINK_FLAGS=""
+if [[ -f "$LIBOMP/include/omp.h" ]]; then
+  OMP_COMPILE_FLAGS="-Xclang -fopenmp -I$LIBOMP/include"
+  OMP_LINK_FLAGS="-L$LIBOMP/lib -lomp"
+  info "libomp: $LIBOMP"
+else
+  warn "libomp not found — ColPack will fail on a missing omp.h"
+fi
+
 # --------------------------------------------------------------------- 2/5 ---
 
 step "2/5  Fetching OpenModelica $OM_VERSION"
@@ -179,7 +197,7 @@ step "3/5  Configuring with CMake"
 
 # Keg-only formulae need explicit hints; Qt and OSG are found via their opt dirs.
 prefix_path="$BREW_PREFIX"
-for p in qt open-scene-graph expat readline gettext libiconv boost; do
+for p in qt open-scene-graph expat readline gettext libiconv boost libomp; do
   [[ -d "$BREW_PREFIX/opt/$p" ]] && prefix_path="$prefix_path;$BREW_PREFIX/opt/$p"
 done
 
@@ -194,11 +212,28 @@ cmake_args=(
   -DCMAKE_CXX_COMPILER=clang++
   -DCMAKE_PREFIX_PATH="$prefix_path"
   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+  -DCMAKE_C_FLAGS="$OMP_COMPILE_FLAGS"
+  -DCMAKE_CXX_FLAGS="$OMP_COMPILE_FLAGS"
+  -DCMAKE_EXE_LINKER_FLAGS="$OMP_LINK_FLAGS"
+  -DCMAKE_SHARED_LINKER_FLAGS="$OMP_LINK_FLAGS"
+  -DCMAKE_MODULE_LINKER_FLAGS="$OMP_LINK_FLAGS"
   -DOM_USE_CCACHE=ON
   -DOM_OMC_USE_LAPACK=ON        # satisfied by Apple's Accelerate framework
   -DOM_OMC_USE_CORBA=OFF
   -DOM_ENABLE_ENCRYPTION=OFF
 )
+
+# Hints for the subprojects that *do* call find_package(OpenMP); CMake cannot
+# detect OpenMP under AppleClang on its own.
+if [[ -n "$OMP_COMPILE_FLAGS" ]]; then
+  cmake_args+=(
+    -DOpenMP_C_FLAGS="$OMP_COMPILE_FLAGS"
+    -DOpenMP_C_LIB_NAMES=omp
+    -DOpenMP_CXX_FLAGS="$OMP_COMPILE_FLAGS"
+    -DOpenMP_CXX_LIB_NAMES=omp
+    -DOpenMP_omp_LIBRARY="$LIBOMP/lib/libomp.dylib"
+  )
+fi
 
 if (( WITH_FORTRAN )); then
   cmake_args+=( -DOM_OMC_ENABLE_FORTRAN=ON -DCMAKE_Fortran_COMPILER="$GFORTRAN" )
