@@ -12,15 +12,21 @@ Pinned to **v1.27.0** (July 2026).
 Copy and paste this into a terminal:
 
 ```sh
+mkdir -p ~/Developer && cd ~/Developer
 git clone https://github.com/maxschatz/openmodelica-build.git
 cd openmodelica-build
 ./build.sh --setup-shell
 ```
 
-That's the whole thing. It installs the Homebrew dependencies, clones the
-release, builds it, adds `omc` to your `PATH` in `~/.zshrc`, and finally
-compiles and simulates a test model to prove the toolchain actually works.
-Expect **40–90 minutes** and about **15 GB** of disk on a first run.
+That's the whole thing. It creates `~/Developer` (Apple's conventional location
+for source projects — Finder even gives it its own icon), clones this repo into
+it, installs the Homebrew dependencies, builds OpenModelica, adds `omc` to your
+`PATH` in `~/.zshrc`, and finally compiles and simulates a test model to prove
+the toolchain actually works. Expect **40–90 minutes** and about **15 GB** of
+disk on a first run.
+
+Everything lands under `~/Developer/openmodelica-build`, and nothing is
+installed system-wide — delete that one folder and it's gone.
 
 ```
 ==> 4/5  Building with 12 jobs
