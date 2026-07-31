@@ -457,8 +457,13 @@ ${BOLD}Installed to${RST} $INSTALL_DIR
     ${DIM}export OPENMODELICAHOME="$INSTALL_DIR"${RST}
     ${DIM}export PATH="$INSTALL_DIR/bin:\$PATH"${RST}
 EOF
-(( WITH_GUI )) && [[ -d "$INSTALL_DIR/bin/OMEdit.app" ]] && cat <<EOF
-  Launch the GUI:
-    ${DIM}open "$INSTALL_DIR/bin/OMEdit.app"${RST}
-EOF
+# Qt installs .app bundles under Applications/, not bin/. Plain if/fi rather
+# than a && chain: the chain evaluates false without a GUI build, and as the
+# script's last command that would exit non-zero on a perfectly good build.
+if (( WITH_GUI )) && compgen -G "$INSTALL_DIR/Applications/*.app" >/dev/null; then
+  printf '\n  GUI apps:\n'
+  for app in "$INSTALL_DIR"/Applications/*.app; do
+    printf '    %sopen "%s"%s\n' "$DIM" "$app" "$RST"
+  done
+fi
 echo

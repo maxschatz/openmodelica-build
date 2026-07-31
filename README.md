@@ -66,11 +66,15 @@ enabled and the checkout is reused.
 export OPENMODELICAHOME="$PWD/install"
 export PATH="$PWD/install/bin:$PATH"
 
-omc --version
-open install/bin/OMEdit.app
+omc --version          # -> v1.27.0-cmake
+open install/Applications/OMEdit.app
 ```
 
 Add the two `export` lines to `~/.zshrc` to make it permanent.
+
+Command-line tools land in `install/bin` (`omc`, `OMSimulator`,
+`OMShell-terminal`, …); the Qt apps are `.app` bundles in
+`install/Applications` (`OMEdit`, `OMNotebook`, `OMPlot`, `OMShell`).
 
 ## What gets built
 
