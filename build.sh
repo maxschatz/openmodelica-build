@@ -22,7 +22,7 @@ WITH_COLPACK=0                # see the ColPack note below
 SKIP_DEPS=0
 CLEAN=0
 RECONFIGURE=0
-SETUP_SHELL=0                 # append the env block to ~/.zshrc
+SETUP_SHELL=1                 # append the env block to ~/.zshrc
 SHELL_RC="${ZDOTDIR:-$HOME}/.zshrc"
 ENV_MARKER_BEGIN="# >>> openmodelica (managed by openmodelica-build) >>>"
 ENV_MARKER_END="# <<< openmodelica <<<"
@@ -64,9 +64,12 @@ Options:
   --minimal         Upstream's conservative Apple Silicon profile:
                     equivalent to --no-gui --no-fortran --no-optimization
 
-  --setup-shell     Add OPENMODELICAHOME/PATH to ~/.zshrc (idempotent). Without
-                    this the script only writes env.sh for you to source -- a
-                    child process cannot change your shell's environment.
+  --no-setup-shell  Do NOT touch ~/.zshrc. By default the build adds an
+                    OPENMODELICAHOME/PATH block to it (idempotent, and removed
+                    again by uninstall.sh) so that omc works in a new terminal.
+                    env.sh is written either way, to source manually -- a child
+                    process cannot change its parent shell's environment.
+  --setup-shell     Explicitly request the above. It is already the default.
   --skip-deps       Don't touch Homebrew, assume deps are present
   --reconfigure     Re-run cmake configure even if the build dir exists
   --clean           Delete build_cmake/ and install/ before building
@@ -89,6 +92,7 @@ while [[ $# -gt 0 ]]; do
     --with-colpack)    WITH_COLPACK=1; shift ;;
     --minimal)         WITH_GUI=0; WITH_FORTRAN=0; WITH_OPTIMIZATION=0; shift ;;
     --setup-shell)     SETUP_SHELL=1; shift ;;
+    --no-setup-shell)  SETUP_SHELL=0; shift ;;
     --skip-deps)       SKIP_DEPS=1; shift ;;
     --reconfigure)     RECONFIGURE=1; shift ;;
     --clean)           CLEAN=1; shift ;;
