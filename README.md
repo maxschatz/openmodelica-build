@@ -7,14 +7,19 @@ container or a source build. This is the source build.
 
 Pinned to **v1.27.0** (July 2026).
 
-## Quick start
+## Install
+
+Copy and paste this into a terminal:
 
 ```sh
-./build.sh
+git clone https://github.com/maxschatz/openmodelica-build.git
+cd openmodelica-build
+./build.sh --setup-shell
 ```
 
 That's the whole thing. It installs the Homebrew dependencies, clones the
-release, builds it, and simulates a test model to prove the result works.
+release, builds it, adds `omc` to your `PATH` in `~/.zshrc`, and finally
+compiles and simulates a test model to prove the toolchain actually works.
 Expect **40–90 minutes** and about **15 GB** of disk on a first run.
 
 ```
@@ -23,6 +28,66 @@ Expect **40–90 minutes** and about **15 GB** of disk on a first run.
 
   [###################---------------------]  47%  18m04s  Building Fortran object dmumps.F.o
 ```
+
+Then open a new terminal and:
+
+```sh
+omc --version
+open install/Applications/OMEdit.app
+```
+
+Drop `--setup-shell` if you would rather not have `~/.zshrc` touched; the script
+writes a source-able `env.sh` either way.
+
+### Requirements
+
+- Apple Silicon Mac (M1 or newer)
+- [Homebrew](https://brew.sh)
+- Xcode Command Line Tools — `xcode-select --install`
+
+Everything else is installed for you. Note the Command Line Tools are needed at
+**runtime** too, not just to build: `omc` compiles generated C code every time
+you simulate a model.
+
+## Tested on
+
+This was built and verified end to end on exactly this configuration:
+
+| | |
+| --- | --- |
+| **Machine** | Apple **M4 Pro**, 12 cores, arm64 |
+| **macOS** | **26.6** (build 25G72) |
+| **OpenModelica** | **v1.27.0** → `omc v1.27.0-cmake` |
+| **Date verified** | **2026-07-31** |
+
+<details>
+<summary>Full toolchain versions</summary>
+
+| | |
+| --- | --- |
+| Apple clang | 21.0.0 (clang-2100.1.1.101) |
+| Command Line Tools | 26.6.0.0.1781586589 |
+| Homebrew | 6.0.13 |
+| CMake | 4.4.1 |
+| Qt | 6.11.1 |
+| GCC (for gfortran) | 16.1.0 |
+| Boost | 1.90.0 |
+| OpenSceneGraph | 3.6.5 |
+| OpenJDK | 26.0.2 |
+
+</details>
+
+Verification was not just "it compiled": `omc` ran a Modelica model through the
+full pipeline — code generation, C compilation, simulation — producing a `.mat`
+result with `The simulation finished successfully`, and OMEdit was launched and
+confirmed to render, including the Documentation panel.
+
+**Other configurations are untested.** Nothing here is Mac-model-specific, so
+any Apple Silicon machine should behave identically, but newer macOS releases,
+a different Xcode, or newer Homebrew Qt/GCC may shift things. The macOS source
+patches in particular are matched against upstream's exact source text and will
+fail loudly rather than silently produce a broken build if a future
+OpenModelica release rewrites those blocks.
 
 ## Usage
 
