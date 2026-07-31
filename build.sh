@@ -270,7 +270,13 @@ step "3/5  Configuring with CMake"
 
 # Keg-only formulae need explicit hints; Qt and OSG are found via their opt dirs.
 prefix_path="$BREW_PREFIX"
-for p in qt open-scene-graph expat readline gettext libiconv boost libomp; do
+# libomp is deliberately absent here. It is keg-only, so leaving it out is what
+# keeps find_package(OpenMP) failing, which is the stock macOS behaviour. Adding
+# it makes OpenMP "found", and OMSICpp then defines USE_OPENMP for its Peer and
+# CppDASSL solvers -- whose legacy CMake propagates OpenMP_CXX_FLAGS but never
+# the include directory, so they include <omp.h> and cannot find it. ColPack
+# gets the include path handed to it directly instead (see OMP_COMPILE_FLAGS).
+for p in qt open-scene-graph expat readline gettext libiconv boost; do
   [[ -d "$BREW_PREFIX/opt/$p" ]] && prefix_path="$prefix_path;$BREW_PREFIX/opt/$p"
 done
 
