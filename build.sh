@@ -330,7 +330,17 @@ info "profile: gui=$WITH_GUI fortran=$WITH_FORTRAN optimization=$WITH_OPTIMIZATI
 if [[ -f "$BUILD_DIR/CMakeCache.txt" ]] && (( ! RECONFIGURE )); then
   info "build dir already configured (use --reconfigure to redo)"
 else
-  cmake "${cmake_args[@]}" 2>&1 | tee "$LOG_DIR/03-configure.log"
+  # --fresh wipes CMakeCache.txt first. Re-running cmake over an existing cache
+  # only *adds* or *changes* entries, so a -D option that has been dropped since
+  # the last run silently persists. That is not hypothetical: dropping the
+  # OpenMP_* hints left them cached, find_package(OpenMP) kept succeeding, and
+  # OMSICpp compiled with -fopenmp against a link line that no longer had -lomp.
+  if [[ -f "$BUILD_DIR/CMakeCache.txt" ]]; then
+    info "discarding the existing cache (--fresh)"
+    cmake --fresh "${cmake_args[@]}" 2>&1 | tee "$LOG_DIR/03-configure.log"
+  else
+    cmake "${cmake_args[@]}" 2>&1 | tee "$LOG_DIR/03-configure.log"
+  fi
 fi
 
 # --------------------------------------------------------------------- 4/5 ---
