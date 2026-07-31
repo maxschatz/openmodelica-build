@@ -1,0 +1,7 @@
+# upstream checkout (~2 GB, fetched by build.sh)
+/src/
+
+# build outputs
+/build_cmake/
+/install/
+/logs/
