@@ -115,6 +115,8 @@ OpenModelica release rewrites those blocks.
 | `--no-cpp-runtime` | Disable the C++ simulation runtime |
 | `--with-colpack` | Build the vendored ColPack (off by default — see below) |
 | `--minimal` | Upstream's conservative Apple Silicon profile |
+| `--no-libraries` | Skip installing the Modelica Standard Library (see below) |
+| `--libraries` | Install the standard library — already the default |
 | `--no-setup-shell` | Don't touch `~/.zshrc` (the env block is added by default) |
 | `--setup-shell` | Explicitly add the env block — already the default |
 | `--skip-deps` | Don't touch Homebrew |
@@ -153,6 +155,28 @@ source env.sh
 Command-line tools land in `install/bin` (`omc`, `OMSimulator`,
 `OMShell-terminal`, …); the Qt apps are `.app` bundles in
 `install/Applications` (`OMEdit`, `OMNotebook`, `OMPlot`, `OMShell`).
+
+### The Modelica Standard Library
+
+The CMake `install` target builds the compiler and tools but **not** the
+Modelica Standard Library — omc and OMEdit locate libraries at runtime through
+the `MODELICAPATH`, which on this release is only `~/.openmodelica/libraries`
+(the `$OPENMODELICAHOME/lib/omlibrary` default some docs mention is not actually
+consulted). So a bare build comes up with an empty OMEdit **Library Browser**.
+
+To fix that, the last build step runs `installPackage(Modelica)` with the
+freshly built `omc`, which downloads the standard library — plus its
+`ModelicaServices` and `Complex` dependencies — into `~/.openmodelica/libraries`
+where both omc and OMEdit find it. It needs network access; if you are offline
+the build still succeeds and just warns, and you can install it later yourself:
+
+```sh
+echo 'installPackage(Modelica)' > /tmp/libs.mos && omc /tmp/libs.mos
+```
+
+Pass `--no-libraries` to skip this step. Note the library lives under your home
+directory, not in `install/`, so `uninstall.sh` leaves it in place; remove it by
+hand with `rm -rf ~/.openmodelica/libraries` if you want it gone.
 
 ## What gets built
 

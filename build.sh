@@ -19,6 +19,7 @@ WITH_FORTRAN=1                # gfortran from Homebrew gcc
 WITH_OPTIMIZATION=1           # Ipopt dynamic optimization (implies Fortran)
 WITH_CPP_RUNTIME=1            # C++ simulation runtime (needs Boost)
 WITH_COLPACK=0                # see the ColPack note below
+WITH_LIBRARIES=1             # install the Modelica Standard Library after build
 SKIP_DEPS=0
 CLEAN=0
 RECONFIGURE=0
@@ -64,6 +65,13 @@ Options:
   --minimal         Upstream's conservative Apple Silicon profile:
                     equivalent to --no-gui --no-fortran --no-optimization
 
+  --no-libraries    Skip installing the Modelica Standard Library. By default
+                    the build installs it (and its dependencies) into
+                    ~/.openmodelica/libraries so it shows up in OMEdit's Library
+                    Browser and in omc. Needs network; a failure here is a
+                    warning, not a build failure.
+  --libraries       Explicitly request the above. It is already the default.
+
   --no-setup-shell  Do NOT touch ~/.zshrc. By default the build adds an
                     OPENMODELICAHOME/PATH block to it (idempotent, and removed
                     again by uninstall.sh) so that omc works in a new terminal.
@@ -90,6 +98,8 @@ while [[ $# -gt 0 ]]; do
     --no-optimization) WITH_OPTIMIZATION=0; shift ;;
     --no-cpp-runtime)  WITH_CPP_RUNTIME=0; shift ;;
     --with-colpack)    WITH_COLPACK=1; shift ;;
+    --no-libraries)    WITH_LIBRARIES=0; shift ;;
+    --libraries)       WITH_LIBRARIES=1; shift ;;
     --minimal)         WITH_GUI=0; WITH_FORTRAN=0; WITH_OPTIMIZATION=0; shift ;;
     --setup-shell)     SETUP_SHELL=1; shift ;;
     --no-setup-shell)  SETUP_SHELL=0; shift ;;
@@ -129,9 +139,9 @@ mkdir -p "$LOG_DIR"
 # --------------------------------------------------------------------- 1/5 ---
 
 if (( SKIP_DEPS )); then
-  step "1/5  Dependencies (skipped)"
+  step "1/6  Dependencies (skipped)"
 else
-  step "1/5  Installing Homebrew dependencies"
+  step "1/6  Installing Homebrew dependencies"
   formulae=( "${BREW_FORMULAE[@]}" )
   (( WITH_GUI )) && formulae+=( "${BREW_GUI_FORMULAE[@]}" )
 
@@ -206,7 +216,7 @@ fi
 
 # --------------------------------------------------------------------- 2/5 ---
 
-step "2/5  Fetching OpenModelica $OM_VERSION"
+step "2/6  Fetching OpenModelica $OM_VERSION"
 
 if (( CLEAN )); then
   info "removing build_cmake/ and install/"
@@ -365,7 +375,7 @@ PY
 
 # --------------------------------------------------------------------- 3/5 ---
 
-step "3/5  Configuring with CMake"
+step "3/6  Configuring with CMake"
 
 # Keg-only formulae need explicit hints; Qt and OSG are found via their opt dirs.
 prefix_path="$BREW_PREFIX"
@@ -430,7 +440,7 @@ else
   cmake_args+=( -DOM_ENABLE_GUI_CLIENTS=OFF )
 fi
 
-info "profile: gui=$WITH_GUI fortran=$WITH_FORTRAN optimization=$WITH_OPTIMIZATION cpp-runtime=$WITH_CPP_RUNTIME colpack=$WITH_COLPACK"
+info "profile: gui=$WITH_GUI fortran=$WITH_FORTRAN optimization=$WITH_OPTIMIZATION cpp-runtime=$WITH_CPP_RUNTIME colpack=$WITH_COLPACK libraries=$WITH_LIBRARIES"
 
 if [[ -f "$BUILD_DIR/CMakeCache.txt" ]] && (( ! RECONFIGURE )); then
   info "build dir already configured (use --reconfigure to redo)"
@@ -450,7 +460,7 @@ fi
 
 # --------------------------------------------------------------------- 4/5 ---
 
-step "4/5  Building with $JOBS jobs"
+step "4/6  Building with $JOBS jobs"
 info "expect 40-90 min on a first build; ccache makes reruns much faster"
 echo
 
@@ -519,7 +529,7 @@ if (( build_rc != 0 )); then
 $(grep -E 'error:|Error [0-9]|FAILED' "$LOG_DIR/04-build.log" | tail -5 | sed 's/^/      /')"
 fi
 
-# --------------------------------------------------------------------- 5/5 ---
+# --------------------------------------------------------------------- 5/6 ---
 
 if (( WITH_GUI )) && compgen -G "$INSTALL_DIR/Applications/*.app" >/dev/null; then
   step "Re-signing app bundles"
@@ -539,10 +549,64 @@ if (( WITH_GUI )) && compgen -G "$INSTALL_DIR/Applications/*.app" >/dev/null; th
   done
 fi
 
-step "5/5  Verifying"
-
 OMC="$INSTALL_DIR/bin/omc"
 [[ -x "$OMC" ]] || die "omc was not installed at $OMC"
+
+# The Modelica Standard Library is not part of the CMake "install" target: omc
+# and OMEdit locate libraries at runtime through the MODELICAPATH, which on this
+# release is *only* ~/.openmodelica/libraries. OPENMODELICAHOME/lib/omlibrary is
+# documented as a default but not actually consulted (see the runtime's
+# SettingsImpl__getModelicaPath in settingsimpl.c), so installing into the build
+# tree would not help. A fresh build therefore comes up with an empty Library
+# Browser until the library is installed into that user directory, which is
+# exactly what installPackage(Modelica) does -- pulling in its ModelicaServices
+# and Complex dependencies too.
+install_libraries() {
+  local user_libs="$HOME/.openmodelica/libraries"
+
+  # Idempotent: an existing Modelica keeps reruns cheap and offline-friendly.
+  # The whole glob has to be one quoted argument -- an unquoted trailing * would
+  # be expanded by the shell before compgen, which only reads its first pattern.
+  if compgen -G "$user_libs/Modelica *" >/dev/null 2>&1; then
+    info "Modelica library already present in $user_libs — skipping"
+    return 0
+  fi
+
+  # omc only runs scripts whose name ends in .mos, so stage one in a temp dir.
+  local tmpd; tmpd="$(mktemp -d)"
+  cat > "$tmpd/install-libs.mos" <<'EOF'
+if installPackage(Modelica, "", exactMatch=false) then
+  print("OM_LIBS_OK\n");
+else
+  print("OM_LIBS_FAIL\n" + getErrorString() + "\n");
+end if;
+EOF
+
+  # Non-fatal: an offline machine still has a perfectly good compiler build, so
+  # a download failure here is a warning rather than a hard error.
+  if "$OMC" "$tmpd/install-libs.mos" 2>&1 | tee "$LOG_DIR/05-libraries.log" | grep -q '^OM_LIBS_OK'; then
+    rm -rf "$tmpd"
+    info "installed the Modelica Standard Library (+ ModelicaServices, Complex)"
+    info "into $user_libs"
+    return 0
+  fi
+
+  rm -rf "$tmpd"
+  warn "could not install the Modelica libraries (offline?) — see $LOG_DIR/05-libraries.log"
+  warn "OMEdit's Library Browser will be empty until you run, in omc or OMShell:"
+  warn "  installPackage(Modelica)"
+  return 1
+}
+
+if (( WITH_LIBRARIES )); then
+  step "5/6  Installing the Modelica libraries"
+  install_libraries || true
+else
+  step "5/6  Installing the Modelica libraries (skipped — --no-libraries)"
+fi
+
+step "6/6  Verifying"
+
 info "omc: $("$OMC" --version)"
 
 smoke="$(mktemp -d)"
@@ -559,11 +623,26 @@ loadFile("$smoke/Smoke.mo"); getErrorString();
 simulate(Smoke, stopTime = 1.0); getErrorString();
 EOF
 
-if (cd "$smoke" && "$OMC" run.mos) | tee "$LOG_DIR/05-smoke.log" | grep -q 'resultFile = "[^"]\+\.mat"'; then
+if (cd "$smoke" && "$OMC" run.mos) | tee "$LOG_DIR/06-smoke.log" | grep -q 'resultFile = "[^"]\+\.mat"'; then
   printf '\n%s==> OpenModelica %s built and simulating.%s\n' "$GRN" "$OM_VERSION" "$RST"
 else
   warn "omc runs but the smoke simulation did not produce a result file"
-  warn "see $LOG_DIR/05-smoke.log"
+  warn "see $LOG_DIR/06-smoke.log"
+fi
+
+# The whole point of the library step is that the standard library actually
+# loads; confirm it here rather than trusting the download alone. loadModel
+# resolves Modelica through the same MODELICAPATH OMEdit's Library Browser uses.
+if (( WITH_LIBRARIES )); then
+  cat > "$smoke/lib.mos" <<'EOF'
+print(if loadModel(Modelica) then "OM_LIB_LOAD_OK\n" else "OM_LIB_LOAD_FAIL\n" + getErrorString() + "\n");
+EOF
+  if (cd "$smoke" && "$OMC" lib.mos) | grep -q '^OM_LIB_LOAD_OK'; then
+    info "Modelica standard library loads — it will appear in OMEdit's Library Browser"
+  else
+    warn "the Modelica standard library did not load — OMEdit's Library Browser"
+    warn "may be empty. Try, in omc or OMShell:  installPackage(Modelica)"
+  fi
 fi
 
 # A child process cannot mutate its parent's environment, so the best this
